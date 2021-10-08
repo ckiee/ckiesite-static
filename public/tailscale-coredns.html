@@ -1,0 +1,237 @@
+<?xml version="1.0" encoding="UTF-8" ?>
+<!DOCTYPE html PUBLIC "-//W3C//DTD XHTML 1.0 Strict//EN"
+	"http://www.w3.org/TR/xhtml1/DTD/xhtml1-strict.dtd">
+
+<html xmlns="http://www.w3.org/1999/xhtml">
+
+<head>
+<title>tailscale-coredns.html</title>
+<meta http-equiv="Content-Type" content="application/xhtml+xml;charset=utf-8"/>
+<link rel="stylesheet" type="text/css" media="all" href="https://cdn.jsdelivr.net/npm/github-markdown-css/github-markdown.min.css"  />
+<link rel="stylesheet" type="text/css" media="all" href="https://cdn.jsdelivr.net/gh/highlightjs/cdn-release/build/styles/github.min.css"  /><meta name='viewport' content='width=device-width, initial-scale=1, shrink-to-fit=no'><style> body { box-sizing: border-box; max-width: 740px; width: 100%; margin: 40px auto; padding: 0 10px; } </style><script id='MathJax-script' async src='https://cdn.jsdelivr.net/npm/mathjax@3/es5/tex-mml-chtml.js'></script><script src='https://cdn.jsdelivr.net/gh/highlightjs/cdn-release/build/highlight.min.js'></script><script>document.addEventListener('DOMContentLoaded', () => { document.body.classList.add('markdown-body'); document.querySelectorAll('pre[lang] > code').forEach((code) => { code.classList.add(code.parentElement.lang); }); document.querySelectorAll('pre > code').forEach((code) => { hljs.highlightBlock(code); }); });</script>
+</head>
+
+<body>
+
+<h1 id="an-adventure-through-tailscale-and-coredns">An Adventure Through Tailscale and CoreDNS</h1>
+<h2 id="prologue">prologue</h2>
+<p>recently, i’ve been using my beefier <a href="https://github.com/ckiee/nixfiles/blob/ebc09474dd7b005c8e19e9188db2123e4a5d7081/README.md#cookiemonster">desktop machine</a> remotely to conserve battery when coding on my laptop while i’m at school.</p>
+<p>this works pretty well most of the time (i have another host’s sshd port-forwarded to <a href="https://en.wikipedia.org/wiki/Wake-on-LAN">WoL</a> the machine) but trying to swoosh ssh into [reverse-]forwarding the right ports to test stuff gets painful rather quickly when using <a href="https://github.com/DBCDK/morph">tooling that</a> <a href="https://nixos.org/manual/nix/unstable/command-ref/new-cli/nix3-copy.html">runs ssh</a> for you.</p>
+<h2 id="tailscale">Tailscale</h2>
+<p><a href="https://tailscale.com">Tailscale</a> is a nice overlay VPN backed by WireGuard; basically you login into tailscale on a bunch of machines and they get assigned private IPv4s. apparently it’s <a href="https://tailscale.com/blog/how-nat-traversal-works/">supposed to break through NATs</a> but i haven’t had any luck with that.</p>
+<p>i have a friend who works at tailscale which has made me quite aware of it’s existence. i’ve been carefully avoiding getting a VPN setup <a href="https://github.com/ckiee/nixfiles/commit/b33a40f">for 4 months</a>, but a few weeks of constantly rereading the <code>ssh(1)</code> manpage for the various port forwarding argument syntaxes did it for me.</p>
+<p>being a NixOS user, i dropped a quick <code>services.tailscale.enable = true;</code> on my local machine’s configuration, rebuilt, ran <code>tailscale up</code> and logged in.</p>
+<p><code>tailscaled</code> was happily churning along in the background, so i proceeded to think about running <code>tailscale up</code> 3 more times for my other hosts, got terrified at the proposition and wrote <a href="https://github.com/ckiee/nixfiles/blob/ebc09474dd7b005c8e19e9188db2123e4a5d7081/modules/services/tailscale.nix">this</a> instead:</p>
+<div class="sourceCode" id="cb1"><pre class="sourceCode nix"><code class="sourceCode bash"><span id="cb1-1"><a href="#cb1-1" aria-hidden="true" tabindex="-1"></a>    <span class="ex">cookie.secrets.tailscale-authkey</span> = {</span>
+<span id="cb1-2"><a href="#cb1-2" aria-hidden="true" tabindex="-1"></a>      <span class="bu">source</span> = <span class="st">&quot;./secrets/tailscale-authkey&quot;</span><span class="kw">;</span></span>
+<span id="cb1-3"><a href="#cb1-3" aria-hidden="true" tabindex="-1"></a>      <span class="ex">owner</span> = <span class="st">&quot;root&quot;</span><span class="kw">;</span></span>
+<span id="cb1-4"><a href="#cb1-4" aria-hidden="true" tabindex="-1"></a>      <span class="ex">group</span> = <span class="st">&quot;root&quot;</span><span class="kw">;</span></span>
+<span id="cb1-5"><a href="#cb1-5" aria-hidden="true" tabindex="-1"></a>      <span class="ex">permissions</span> = <span class="st">&quot;0400&quot;</span><span class="kw">;</span></span>
+<span id="cb1-6"><a href="#cb1-6" aria-hidden="true" tabindex="-1"></a>      <span class="ex">wantedBy</span> = <span class="st">&quot;tailscaled-autoconfig.service&quot;</span><span class="kw">;</span></span>
+<span id="cb1-7"><a href="#cb1-7" aria-hidden="true" tabindex="-1"></a>    <span class="er">}</span><span class="kw">;</span></span>
+<span id="cb1-8"><a href="#cb1-8" aria-hidden="true" tabindex="-1"></a></span>
+<span id="cb1-9"><a href="#cb1-9" aria-hidden="true" tabindex="-1"></a>    <span class="ex">systemd.services.tailscaled-autoconfig</span> = rec {</span>
+<span id="cb1-10"><a href="#cb1-10" aria-hidden="true" tabindex="-1"></a>      <span class="ex">description</span> = <span class="st">&quot;Autoconfigure tailscaled&quot;</span><span class="kw">;</span></span>
+<span id="cb1-11"><a href="#cb1-11" aria-hidden="true" tabindex="-1"></a>      <span class="ex">wantedBy</span> = [ <span class="st">&quot;multi-user.target&quot;</span> ]<span class="kw">;</span></span>
+<span id="cb1-12"><a href="#cb1-12" aria-hidden="true" tabindex="-1"></a>      <span class="ex">requires</span> = [ <span class="st">&quot;tailscaled.service&quot;</span> <span class="st">&quot;tailscale-authkey-key.service&quot;</span> ]<span class="kw">;</span></span>
+<span id="cb1-13"><a href="#cb1-13" aria-hidden="true" tabindex="-1"></a>      <span class="ex">after</span> = requires<span class="kw">;</span></span>
+<span id="cb1-14"><a href="#cb1-14" aria-hidden="true" tabindex="-1"></a></span>
+<span id="cb1-15"><a href="#cb1-15" aria-hidden="true" tabindex="-1"></a>      <span class="ex">serviceConfig.Type</span> = <span class="st">&quot;oneshot&quot;</span><span class="kw">;</span></span>
+<span id="cb1-16"><a href="#cb1-16" aria-hidden="true" tabindex="-1"></a></span>
+<span id="cb1-17"><a href="#cb1-17" aria-hidden="true" tabindex="-1"></a><span class="co"># tailscale has auth keys, which are just little tokens used to automate logging in.</span></span>
+<span id="cb1-18"><a href="#cb1-18" aria-hidden="true" tabindex="-1"></a>      <span class="ex">script</span> =</span>
+<span id="cb1-19"><a href="#cb1-19" aria-hidden="true" tabindex="-1"></a>        <span class="st">&quot;</span><span class="va">${tailscale}</span><span class="st">/bin/tailscale up --reset --force-reauth --authkey </span><span class="va">$(</span><span class="fu">cat</span> <span class="va">${</span></span>
+<span id="cb1-20"><a href="#cb1-20" aria-hidden="true" tabindex="-1"></a><span class="er">          escapeShellArg config.cookie.secrets.tailscale-authkey.dest</span></span>
+<span id="cb1-21"><a href="#cb1-21" aria-hidden="true" tabindex="-1"></a><span class="er">        </span><span class="va">})</span><span class="st">&quot;</span><span class="kw">;</span></span>
+<span id="cb1-22"><a href="#cb1-22" aria-hidden="true" tabindex="-1"></a>    <span class="er">}</span><span class="kw">;</span></span>
+<span id="cb1-23"><a href="#cb1-23" aria-hidden="true" tabindex="-1"></a>  <span class="er">}</span><span class="kw">;</span></span></code></pre></div>
+<p>after encrypting the new <code>tailscale-authkey</code> secret it happily deployed, which meant it was time for my next problem…</p>
+<pre><code>ckie@cookiemonster ~ -&gt; tailscale status
+100.77.146.21   cookiemonster        ckiee@       linux   -
+100.124.234.25  bokkusu              ckiee@       linux   -
+100.80.1.116    drapion              ckiee@       linux   -
+100.94.232.88   galaxy-a51           ckiee@       android active; direct 192.168.0.43:35862, tx 8463276 rx 642228
+100.89.163.81   thonkcookie          ckiee@       linux   -</code></pre>
+<p>(sidenote: i’m still not sure how i feel about depending on yet another company, but i can always fall back on other solutions.)</p>
+<h2 id="dns-troubles">DNS troubles</h2>
+<p>on my home network, i have a <a href="https://coredns.io/">CoreDNS</a> server listening locally, filtering ads and forwarding other traffic to <a href="https://github.com/cloudflare/cloudflared"><code>cloudflared</code></a> which (among other things) sends queries using DNS-over-HTTPS. this has worked pretty well for a while but with the addition of non-local devices, keeping a single host serving two different continents seems like a latency disaster, so i refactored a tad and enabled the <a href="https://github.com/ckiee/nixfiles/blob/dd69f55613cd3e64687a99426dfac926f526a6c4/modules/services/coredns/default.nix">coredns module</a> on all tailscale-connected hosts.</p>
+<h3 id="magicdns">MagicDNS</h3>
+<p><code>tailscaled</code> can also act as a DNS resolver to resolve requests like <code>&lt;host&gt;.example.com.beta.tailscale.net</code>; it’s supposed to <a href="https://tailscale.com/blog/sisyphean-dns-client-linux/">autoconfigure this</a> but that didn’t work, feels a bit intrusive and doesn’t really work with the rest of my setup as i want to keep ad-blocking consistently working.</p>
+<p>having too much free time, i sat down and whipped up a little script to occasionally regenerate my hosts file with the currently available tailscale hosts:</p>
+<div class="sourceCode" id="cb3"><pre class="sourceCode nix"><code class="sourceCode bash"><span id="cb3-1"><a href="#cb3-1" aria-hidden="true" tabindex="-1"></a>  <span class="ex">baseHosts</span> = pkgs.writeTextFile {</span>
+<span id="cb3-2"><a href="#cb3-2" aria-hidden="true" tabindex="-1"></a>    <span class="ex">name</span> = <span class="st">&quot;coredns-hosts-ckie&quot;</span><span class="kw">;</span></span>
+<span id="cb3-3"><a href="#cb3-3" aria-hidden="true" tabindex="-1"></a>    <span class="ex">text</span> = <span class="st">&#39;&#39;</span></span>
+<span id="cb3-4"><a href="#cb3-4" aria-hidden="true" tabindex="-1"></a>      <span class="co"># StevenBlack ad-blocking hosts</span></span>
+<span id="cb3-5"><a href="#cb3-5" aria-hidden="true" tabindex="-1"></a>      <span class="va">${extHosts}</span></span>
+<span id="cb3-6"><a href="#cb3-6" aria-hidden="true" tabindex="-1"></a>      <span class="co"># Runtime hosts</span></span>
+<span id="cb3-7"><a href="#cb3-7" aria-hidden="true" tabindex="-1"></a>    <span class="st">&#39;&#39;</span><span class="kw">;</span></span>
+<span id="cb3-8"><a href="#cb3-8" aria-hidden="true" tabindex="-1"></a>  <span class="er">}</span><span class="kw">;</span></span></code></pre></div>
+<div class="sourceCode" id="cb4"><pre class="sourceCode sh"><code class="sourceCode bash"><span id="cb4-1"><a href="#cb4-1" aria-hidden="true" tabindex="-1"></a><span class="co">#!@bash@/bin/sh</span></span>
+<span id="cb4-2"><a href="#cb4-2" aria-hidden="true" tabindex="-1"></a><span class="co">## shellcheck &amp; shfmt please</span></span>
+<span id="cb4-3"><a href="#cb4-3" aria-hidden="true" tabindex="-1"></a></span>
+<span id="cb4-4"><a href="#cb4-4" aria-hidden="true" tabindex="-1"></a><span class="va">BASE_HOSTS</span><span class="op">=</span><span class="st">&quot;@baseHosts@&quot;</span></span>
+<span id="cb4-5"><a href="#cb4-5" aria-hidden="true" tabindex="-1"></a><span class="bu">export</span> <span class="va">PATH</span><span class="op">=</span><span class="st">&quot;</span><span class="va">$PATH</span><span class="st">:@tailscale@/bin:@jq@/bin&quot;</span></span>
+<span id="cb4-6"><a href="#cb4-6" aria-hidden="true" tabindex="-1"></a></span>
+<span id="cb4-7"><a href="#cb4-7" aria-hidden="true" tabindex="-1"></a><span class="cf">while</span> <span class="fu">true</span><span class="kw">;</span> <span class="cf">do</span></span>
+<span id="cb4-8"><a href="#cb4-8" aria-hidden="true" tabindex="-1"></a>    <span class="va">newhosts</span><span class="op">=</span><span class="va">$(</span><span class="fu">mktemp</span><span class="va">)</span></span>
+<span id="cb4-9"><a href="#cb4-9" aria-hidden="true" tabindex="-1"></a>    <span class="fu">cat</span> <span class="st">&quot;</span><span class="va">$BASE_HOSTS</span><span class="st">&quot;</span> <span class="op">&gt;</span><span class="st">&quot;</span><span class="va">$newhosts</span><span class="st">&quot;</span></span>
+<span id="cb4-10"><a href="#cb4-10" aria-hidden="true" tabindex="-1"></a>    <span class="ex">tailscale</span> status <span class="at">--json</span> <span class="kw">|</span> <span class="ex">jq</span> <span class="at">-r</span> <span class="st">&#39;([.Peer[]] + [.Self])[] | [.TailAddr, (.HostName | split(&quot; &quot;) | join(&quot;-&quot;) | ascii_downcase) + &quot;@hostSuffix@&quot;] | @tsv&#39;</span> <span class="op">&gt;&gt;</span> <span class="st">&quot;</span><span class="va">$newhosts</span><span class="st">&quot;</span></span>
+<span id="cb4-11"><a href="#cb4-11" aria-hidden="true" tabindex="-1"></a>    <span class="co"># we do this little dance to try to ensure coredns doesn&#39;t reload while</span></span>
+<span id="cb4-12"><a href="#cb4-12" aria-hidden="true" tabindex="-1"></a>    <span class="co"># we&#39;re still writing to the file.</span></span>
+<span id="cb4-13"><a href="#cb4-13" aria-hidden="true" tabindex="-1"></a>    <span class="fu">rm</span> /run/coredns-hosts</span>
+<span id="cb4-14"><a href="#cb4-14" aria-hidden="true" tabindex="-1"></a>    <span class="fu">mv</span> <span class="st">&quot;</span><span class="va">$newhosts</span><span class="st">&quot;</span> /run/coredns-hosts</span>
+<span id="cb4-15"><a href="#cb4-15" aria-hidden="true" tabindex="-1"></a>    <span class="fu">sleep</span> 10</span>
+<span id="cb4-16"><a href="#cb4-16" aria-hidden="true" tabindex="-1"></a><span class="cf">done</span></span></code></pre></div>
+<p>..sprinkling in some glue:</p>
+<div class="sourceCode" id="cb5"><pre class="sourceCode nix"><code class="sourceCode bash"><span id="cb5-1"><a href="#cb5-1" aria-hidden="true" tabindex="-1"></a>      <span class="ex">systemd.services.dns-hosts-poller</span> = {</span>
+<span id="cb5-2"><a href="#cb5-2" aria-hidden="true" tabindex="-1"></a>      <span class="co"># [cut]</span></span>
+<span id="cb5-3"><a href="#cb5-3" aria-hidden="true" tabindex="-1"></a>        <span class="ex">serviceConfig</span> = {</span>
+<span id="cb5-4"><a href="#cb5-4" aria-hidden="true" tabindex="-1"></a>          <span class="ex">Type</span> = <span class="st">&quot;simple&quot;</span><span class="kw">;</span></span>
+<span id="cb5-5"><a href="#cb5-5" aria-hidden="true" tabindex="-1"></a>          <span class="ex">ExecStart</span> = pkgs.runCommandLocal <span class="st">&quot;dns-hosts-poller&quot;</span> {</span>
+<span id="cb5-6"><a href="#cb5-6" aria-hidden="true" tabindex="-1"></a>            <span class="ex">inherit</span> <span class="er">(</span><span class="ex">pkgs</span><span class="kw">)</span> <span class="fu">bash</span> tailscale jq<span class="kw">;</span></span>
+<span id="cb5-7"><a href="#cb5-7" aria-hidden="true" tabindex="-1"></a>            <span class="ex">inherit</span> baseHosts hostSuffix<span class="kw">;</span></span>
+<span id="cb5-8"><a href="#cb5-8" aria-hidden="true" tabindex="-1"></a>          <span class="er">}</span> <span class="st">&#39;&#39;</span></span>
+<span id="cb5-9"><a href="#cb5-9" aria-hidden="true" tabindex="-1"></a>            <span class="ex">substituteAll</span> <span class="st">&quot;</span><span class="va">${</span><span class="er">./dns-hosts-poller</span><span class="va">}</span><span class="st">&quot;</span> <span class="st">&quot;</span><span class="va">$out</span><span class="st">&quot;</span></span>
+<span id="cb5-10"><a href="#cb5-10" aria-hidden="true" tabindex="-1"></a>            <span class="fu">chmod</span> +x <span class="st">&quot;</span><span class="va">$out</span><span class="st">&quot;</span></span>
+<span id="cb5-11"><a href="#cb5-11" aria-hidden="true" tabindex="-1"></a>          <span class="st">&#39;&#39;</span><span class="kw">;</span></span>
+<span id="cb5-12"><a href="#cb5-12" aria-hidden="true" tabindex="-1"></a>        <span class="er">}</span><span class="kw">;</span></span>
+<span id="cb5-13"><a href="#cb5-13" aria-hidden="true" tabindex="-1"></a>      <span class="co"># [cut]</span></span>
+<span id="cb5-14"><a href="#cb5-14" aria-hidden="true" tabindex="-1"></a>      <span class="er">}</span><span class="kw">;</span></span></code></pre></div>
+<p>making sure CoreDNS actually [re]loads <code>/run/coredns-hosts</code>:</p>
+<div class="sourceCode" id="cb6"><pre class="sourceCode nix"><code class="sourceCode bash"><span id="cb6-1"><a href="#cb6-1" aria-hidden="true" tabindex="-1"></a><span class="bu">.</span> {</span>
+<span id="cb6-2"><a href="#cb6-2" aria-hidden="true" tabindex="-1"></a>    <span class="ex">hosts</span> /run/coredns-hosts {</span>
+<span id="cb6-3"><a href="#cb6-3" aria-hidden="true" tabindex="-1"></a>        <span class="ex">reload</span> 1500ms</span>
+<span id="cb6-4"><a href="#cb6-4" aria-hidden="true" tabindex="-1"></a>        <span class="ex">fallthrough</span></span>
+<span id="cb6-5"><a href="#cb6-5" aria-hidden="true" tabindex="-1"></a>    <span class="er">}</span></span>
+<span id="cb6-6"><a href="#cb6-6" aria-hidden="true" tabindex="-1"></a>    <span class="ex">forward</span> . 127.0.0.1:1483</span>
+<span id="cb6-7"><a href="#cb6-7" aria-hidden="true" tabindex="-1"></a>    <span class="ex">errors</span></span>
+<span id="cb6-8"><a href="#cb6-8" aria-hidden="true" tabindex="-1"></a>    <span class="ex">cache</span> 120 <span class="co"># two minutes</span></span>
+<span id="cb6-9"><a href="#cb6-9" aria-hidden="true" tabindex="-1"></a><span class="er">}</span></span></code></pre></div>
+<p>..and done! except not, no queries for ad servers get blocked, and nothing is getting resolved:</p>
+<div class="sourceCode" id="cb7"><pre class="sourceCode sh"><code class="sourceCode bash"><span id="cb7-1"><a href="#cb7-1" aria-hidden="true" tabindex="-1"></a><span class="ex">ckie@cookiemonster</span> ~/git/nixfiles <span class="at">-</span><span class="op">&gt;</span> host cookiemonster.tailnet.ckie.dev localhost</span>
+<span id="cb7-2"><a href="#cb7-2" aria-hidden="true" tabindex="-1"></a><span class="ex">Using</span> domain server:</span>
+<span id="cb7-3"><a href="#cb7-3" aria-hidden="true" tabindex="-1"></a><span class="ex">Name:</span> localhost</span>
+<span id="cb7-4"><a href="#cb7-4" aria-hidden="true" tabindex="-1"></a><span class="ex">Address:</span> ::1#53</span>
+<span id="cb7-5"><a href="#cb7-5" aria-hidden="true" tabindex="-1"></a><span class="ex">Aliases:</span></span>
+<span id="cb7-6"><a href="#cb7-6" aria-hidden="true" tabindex="-1"></a></span>
+<span id="cb7-7"><a href="#cb7-7" aria-hidden="true" tabindex="-1"></a><span class="ex">Host</span> cookiemonster.tailnet.ckie.dev not found: 3<span class="er">(</span><span class="ex">NXDOMAIN</span><span class="kw">)</span></span></code></pre></div>
+<p>Let’s prod at what CoreDNS is reading: (those domains there are probably bad, don’t visit!)</p>
+<div class="sourceCode" id="cb8"><pre class="sourceCode sh"><code class="sourceCode bash"><span id="cb8-1"><a href="#cb8-1" aria-hidden="true" tabindex="-1"></a><span class="ex">ckie@cookiemonster</span> ~/git/nixfiles <span class="at">-</span><span class="op">&gt;</span> tail <span class="at">-n20</span> /run/coredns-hosts</span>
+<span id="cb8-2"><a href="#cb8-2" aria-hidden="true" tabindex="-1"></a><span class="ex">tail:</span> cannot open <span class="st">&#39;/run/coredns-hosts&#39;</span> for reading: Permission denied</span>
+<span id="cb8-3"><a href="#cb8-3" aria-hidden="true" tabindex="-1"></a><span class="ex">ckie@cookiemonster</span> ~/git/nixfiles <span class="at">-</span><span class="op">&gt;</span> sudo tail <span class="at">-n20</span> /run/coredns-hosts</span>
+<span id="cb8-4"><a href="#cb8-4" aria-hidden="true" tabindex="-1"></a><span class="ex">0.0.0.0</span> zukxd6fkxqn.com</span>
+<span id="cb8-5"><a href="#cb8-5" aria-hidden="true" tabindex="-1"></a><span class="ex">0.0.0.0</span> zy16eoat1w.com</span>
+<span id="cb8-6"><a href="#cb8-6" aria-hidden="true" tabindex="-1"></a></span>
+<span id="cb8-7"><a href="#cb8-7" aria-hidden="true" tabindex="-1"></a><span class="co"># End yoyo.org</span></span>
+<span id="cb8-8"><a href="#cb8-8" aria-hidden="true" tabindex="-1"></a></span>
+<span id="cb8-9"><a href="#cb8-9" aria-hidden="true" tabindex="-1"></a><span class="co"># blacklist</span></span>
+<span id="cb8-10"><a href="#cb8-10" aria-hidden="true" tabindex="-1"></a><span class="co">#</span></span>
+<span id="cb8-11"><a href="#cb8-11" aria-hidden="true" tabindex="-1"></a><span class="co"># The contents of this file (containing a listing of additional domains in</span></span>
+<span id="cb8-12"><a href="#cb8-12" aria-hidden="true" tabindex="-1"></a><span class="co"># &#39;hosts&#39; file format) are appended to the unified hosts file during the</span></span>
+<span id="cb8-13"><a href="#cb8-13" aria-hidden="true" tabindex="-1"></a><span class="co"># update process. For example, uncomment the following line to block</span></span>
+<span id="cb8-14"><a href="#cb8-14" aria-hidden="true" tabindex="-1"></a><span class="co"># &#39;example.com&#39;:</span></span>
+<span id="cb8-15"><a href="#cb8-15" aria-hidden="true" tabindex="-1"></a></span>
+<span id="cb8-16"><a href="#cb8-16" aria-hidden="true" tabindex="-1"></a><span class="co"># 0.0.0.0 example.com</span></span>
+<span id="cb8-17"><a href="#cb8-17" aria-hidden="true" tabindex="-1"></a></span>
+<span id="cb8-18"><a href="#cb8-18" aria-hidden="true" tabindex="-1"></a><span class="co"># Runtime hosts</span></span>
+<span id="cb8-19"><a href="#cb8-19" aria-hidden="true" tabindex="-1"></a><span class="ex">100.94.232.88</span>   galaxy-a51.tailnet.ckie.dev</span>
+<span id="cb8-20"><a href="#cb8-20" aria-hidden="true" tabindex="-1"></a><span class="ex">100.80.1.116</span>    drapion.tailnet.ckie.dev</span>
+<span id="cb8-21"><a href="#cb8-21" aria-hidden="true" tabindex="-1"></a><span class="ex">100.89.163.81</span>   thonkcookie.tailnet.ckie.dev</span>
+<span id="cb8-22"><a href="#cb8-22" aria-hidden="true" tabindex="-1"></a><span class="ex">100.124.234.25</span>  bokkusu.tailnet.ckie.dev</span>
+<span id="cb8-23"><a href="#cb8-23" aria-hidden="true" tabindex="-1"></a><span class="ex">100.77.146.21</span>   cookiemonster.tailnet.ckie.dev</span></code></pre></div>
+<p>…</p>
+<p>…</p>
+<p><em>Ooooohhhh!</em> CoreDNS might not be running as root, so it can’t open that file, like how I couldn’t initially.</p>
+<pre><code>ckie@cookiemonster ~/git/nixfiles -&gt; cat /etc/systemd/system/coredns.service | grep -i user
+DynamicUser=true</code></pre>
+<p>yup!</p>
+<div class="sourceCode" id="cb10"><pre class="sourceCode sh"><code class="sourceCode bash"><span id="cb10-1"><a href="#cb10-1" aria-hidden="true" tabindex="-1"></a><span class="co"># [cut]</span></span>
+<span id="cb10-2"><a href="#cb10-2" aria-hidden="true" tabindex="-1"></a>    <span class="ex">tailscale</span> status <span class="at">--json</span> <span class="kw">|</span> <span class="ex">jq</span> <span class="at">-r</span> <span class="st">&#39;([.Peer[]] + [.Self])[] | [.TailAddr, (.HostName | split(&quot; &quot;) | join(&quot;-&quot;) | ascii_downcase) + &quot;@hostSuffix@&quot;] | @tsv&#39;</span> <span class="op">&gt;&gt;</span> <span class="st">&quot;</span><span class="va">$newhosts</span><span class="st">&quot;</span></span>
+<span id="cb10-3"><a href="#cb10-3" aria-hidden="true" tabindex="-1"></a>    <span class="fu">chmod</span> 444 <span class="st">&quot;</span><span class="va">$newhosts</span><span class="st">&quot;</span> <span class="co"># ..here we go!</span></span>
+<span id="cb10-4"><a href="#cb10-4" aria-hidden="true" tabindex="-1"></a>    <span class="fu">mv</span> <span class="st">&quot;</span><span class="va">$newhosts</span><span class="st">&quot;</span> /run/coredns-hosts</span>
+<span id="cb10-5"><a href="#cb10-5" aria-hidden="true" tabindex="-1"></a><span class="co"># [cut]</span></span></code></pre></div>
+<p>let’s try it:</p>
+<pre><code>ckie@cookiemonster ~/git/nixfiles -&gt; host cookiemonster.tailnet.ckie.dev localhost
+Using domain server:
+Name: localhost
+Address: 127.0.0.1#53
+Aliases:
+
+Host cookiemonster.tailnet.ckie.dev not found: 3(NXDOMAIN)
+ckie@cookiemonster ~/git/nixfiles -&gt; make debug
+mo deploy morph.nix switch --passwd --on=cookiemonster*
+Selected 1/5 hosts (name filter:-4, limits:-0):
+      0: cookiemonster (secrets: 0, health checks: 0, tags: )
+
+these 6 derivations will be built:
+  /nix/store/s9ra8a3mh13z44nxh3la2li0s9j5q1q2-dns-hosts-poller.drv
+  /nix/store/05hpppgrh8rdrs2pxgvcvdxdy6qfr7vf-unit-dns-hosts-poller.service.drv
+  /nix/store/f1j3s0pk8cgh1gfnl90ldzl2qsi0dayr-system-units.drv
+  /nix/store/8bs3pdrv5j957mza8ng2cka8fndvgmwa-etc.drv
+  /nix/store/ycirn33cr7hpa0xz90yz8asck9b87izb-nixos-system-cookiemonster-21.11pre-git.drv
+  /nix/store/ylfkk8gnzg8v0qvbqqvvm71q0q2aymmd-morph.drv
+building &#39;/nix/store/s9ra8a3mh13z44nxh3la2li0s9j5q1q2-dns-hosts-poller.drv&#39;...
+building &#39;/nix/store/05hpppgrh8rdrs2pxgvcvdxdy6qfr7vf-unit-dns-hosts-poller.service.drv&#39;...
+building &#39;/nix/store/f1j3s0pk8cgh1gfnl90ldzl2qsi0dayr-system-units.drv&#39;...
+building &#39;/nix/store/8bs3pdrv5j957mza8ng2cka8fndvgmwa-etc.drv&#39;...
+building &#39;/nix/store/ycirn33cr7hpa0xz90yz8asck9b87izb-nixos-system-cookiemonster-21.11pre-git.drv&#39;...
+building &#39;/nix/store/ylfkk8gnzg8v0qvbqqvvm71q0q2aymmd-morph.drv&#39;...
+/nix/store/0md4gfhcnhlr15azh2ymcmjdm4ldg2nw-morph
+nix result path:
+/nix/store/0md4gfhcnhlr15azh2ymcmjdm4ldg2nw-morph
+
+Pushing paths to cookiemonster (@cookiemonster):
+    * /nix/store/zc05zrcs3kfms3mgysv6f2sxhk1pk3pc-nixos-system-cookiemonster-21.11pre-git
+
+Executing &#39;switch&#39; on matched hosts:
+
+** cookiemonster
+Please enter remote sudo password:
+could not find any previously installed systemd-boot
+stopping the following units: dns-hosts-poller.service
+activating the configuration...
+setting up /etc...
+reloading user units for ckie...
+setting up tmpfiles
+starting the following units: dns-hosts-poller.service
+
+Running healthchecks on cookiemonster (cookiemonster):
+Health checks OK
+Done: cookiemonster
+ckie@cookiemonster ~/git/nixfiles -&gt; host cookiemonster.tailnet.ckie.dev localhost
+Using domain server:
+Name: localhost
+Address: ::1#53
+Aliases:
+
+cookiemonster.tailnet.ckie.dev has address 100.77.146.21</code></pre>
+<p>that’s pretty cool! but i really don’t want to type <code>cookiemonster.tailnet.ckie.dev</code> every single time, and there’s a easy solution for that:</p>
+<pre><code>Manual page configuration.nix(5) line 8628
+       networking.search
+           The list of search paths used when resolving domain names.
+
+           Type: list of strings
+
+           Default: [ ]
+
+           Example: [ &quot;example.com&quot; &quot;home.arpa&quot; ]
+
+           Declared by:
+               &lt;nixpkgs/nixos/modules/tasks/network-interfaces.nix&gt;</code></pre>
+<div class="sourceCode" id="cb13"><pre class="sourceCode nix"><code class="sourceCode bash"><span id="cb13-1"><a href="#cb13-1" aria-hidden="true" tabindex="-1"></a>      <span class="ex">networking.search</span> = singleton <span class="st">&quot;.tailnet.ckie.dev&quot;</span><span class="kw">;</span></span>
+<span id="cb13-2"><a href="#cb13-2" aria-hidden="true" tabindex="-1"></a>      <span class="co"># /nixpkgs/lib/lists.nix has this:</span></span>
+<span id="cb13-3"><a href="#cb13-3" aria-hidden="true" tabindex="-1"></a>      <span class="co">#   singleton = x: [x];</span></span></code></pre></div>
+<pre><code># this is a bit weird
+ckie@cookiemonster ~/git/nixfiles -&gt; host cookiemonster
+host: &#39;.tailnet.ckie.dev&#39; is not in legal name syntax (empty label)
+# but ping seems to work, so it&#39;s alright..
+ckie@cookiemonster ~/git/nixfiles -&gt; ping cookiemonster -c1
+PING cookiemonster(localhost (::1)) 56 data bytes
+64 bytes from localhost (::1): icmp_seq=1 ttl=64 time=0.035 ms
+
+--- cookiemonster ping statistics ---
+1 packets transmitted, 1 received, 0% packet loss, time 0ms
+rtt min/avg/max/mdev = 0.035/0.035/0.035/0.000 ms</code></pre>
+
+</body>
+</html>
